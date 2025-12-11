@@ -1,0 +1,29 @@
+{
+  "accountAssociation": {
+    "header": "",
+    "payload": "",
+    "signature": ""
+  },
+  "miniapp": {
+    "version": "1",
+    "name": "Plug It",
+    "iconUrl": "https://plugit.app/icon.png",
+    "homeUrl": "https://plugit.app",
+    "imageUrl": "https://plugit.app/og-image.png",
+    "buttonTitle": "🔌 Plug It",
+    "splashImageUrl": "https://plugit.app/icon.png",
+    "splashBackgroundColor": "#2563eb",
+    "description": "Bridge between Web3 apps and Farcaster wallet. Connect to any dApp via WalletConnect and swap tokens across chains.",
+    "requiredChains": [
+      "eip155:1",
+      "eip155:137",
+      "eip155:42161",
+      "eip155:8453"
+    ],
+    "requiredCapabilities": [
+      "wallet.getEthereumProvider",
+      "actions.swapToken"
+    ]
+  }
+}
+

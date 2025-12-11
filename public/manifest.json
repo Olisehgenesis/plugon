@@ -1,0 +1,10 @@
+{
+  "name": "PlugIt",
+  "description": "Plug your Farcaster wallet into dApps and route swaps via Squid/Aave",
+  "version": "0.1.0",
+  "author": "Plug It Team",
+  "permissions": ["wallet.request", "profile.read"],
+  "entry": "/index.html",
+  "icon": "/icon.png"
+}
+
