@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 // @ts-ignore - html5-qrcode doesn't have types
 import { Html5Qrcode } from 'html5-qrcode';
+import { sdk } from '@farcaster/miniapp-sdk';
 import { ButtonCool } from './ui/button-cool';
 
 interface QRScannerProps {
@@ -14,8 +15,37 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
   const [scanning, setScanning] = useState(false);
   const [manualURI, setManualURI] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [cameraPermissionGranted, setCameraPermissionGranted] = useState(false);
+  const [requestingPermission, setRequestingPermission] = useState(false);
+  const [platformType, setPlatformType] = useState<'web' | 'mobile' | null>(null);
+  const [isWebPlatform, setIsWebPlatform] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const qrCodeRegionId = 'qr-reader';
+
+  // Check platform and camera permission status on mount
+  useEffect(() => {
+    const checkContext = async () => {
+      try {
+        const context = await sdk.context;
+        
+        // Check platform type
+        const platform = context.client?.platformType;
+        setPlatformType(platform || null);
+        setIsWebPlatform(platform === 'web');
+        
+        // Check camera permission status
+        if (context.features?.cameraAndMicrophoneAccess) {
+          setCameraPermissionGranted(true);
+        }
+      } catch (error) {
+        // Context might not be available, that's okay
+        console.log('Could not check context:', error);
+        // Default to web if context unavailable
+        setIsWebPlatform(true);
+      }
+    };
+    checkContext();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -25,9 +55,42 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
     };
   }, [scanning]);
 
+  const requestCameraPermission = async () => {
+    // On web platforms, camera access is not supported via SDK
+    if (isWebPlatform) {
+      setError('Camera scanning is not available on web. Please enter the WalletConnect URI manually.');
+      return false;
+    }
+
+    try {
+      setRequestingPermission(true);
+      setError(null);
+      
+      // Request camera and microphone access via Farcaster SDK
+      await sdk.actions.requestCameraAndMicrophoneAccess();
+      setCameraPermissionGranted(true);
+      setRequestingPermission(false);
+      return true;
+    } catch (error: any) {
+      console.error('Camera permission denied:', error);
+      setError('Camera access is required to scan QR codes. You can enter the URI manually instead.');
+      setRequestingPermission(false);
+      return false;
+    }
+  };
+
   const startScanning = async () => {
     try {
       setError(null);
+
+      // Request camera permission if not already granted
+      if (!cameraPermissionGranted) {
+        const granted = await requestCameraPermission();
+        if (!granted) {
+          return; // Permission denied, user can use manual entry
+        }
+      }
+
       const html5QrCode = new Html5Qrcode(qrCodeRegionId);
       scannerRef.current = html5QrCode;
 
@@ -123,9 +186,15 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
               {!scanning && (
                 <div className="w-full aspect-square bg-[#f5f5f5] border-[0.2em] border-[#050505] rounded-[0.4em] flex items-center justify-center">
                   <div className="text-center">
-                    <div className="text-[3em] mb-[0.5em]">📱</div>
+                    <div className="text-[3em] mb-[0.5em]">
+                      {isWebPlatform ? '🌐' : '📱'}
+                    </div>
                     <p className="text-[0.9em] font-semibold text-[#6b7280]">
-                      Camera ready
+                      {isWebPlatform 
+                        ? 'Enter URI manually (web platform)' 
+                        : cameraPermissionGranted 
+                          ? 'Camera ready' 
+                          : 'Request camera access to scan'}
                     </p>
                   </div>
                 </div>
@@ -159,16 +228,25 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
             {/* Buttons */}
             <div className="flex flex-col gap-[0.8em]">
               {!scanning ? (
-                <ButtonCool
-                  onClick={startScanning}
-                  text="Start Camera Scan"
-                  bgColor="#2563eb"
-                  hoverBgColor="#1d4ed8"
-                  borderColor="#050505"
-                  textColor="#ffffff"
-                  size="md"
-                  className="w-full"
-                />
+                !isWebPlatform ? (
+                  <ButtonCool
+                    onClick={startScanning}
+                    text={requestingPermission ? 'Requesting Permission...' : cameraPermissionGranted ? 'Start Camera Scan' : 'Request Camera Access'}
+                    bgColor="#2563eb"
+                    hoverBgColor="#1d4ed8"
+                    borderColor="#050505"
+                    textColor="#ffffff"
+                    size="md"
+                    className="w-full"
+                    disabled={requestingPermission}
+                  />
+                ) : (
+                  <div className="p-3 bg-[#fef3c7] border-[0.15em] border-[#f59e0b] rounded-[0.4em] shadow-[0.2em_0.2em_0_#000000]">
+                    <p className="text-[0.85em] font-semibold text-[#92400e] text-center">
+                      📱 Camera scanning is only available on mobile. Please enter the WalletConnect URI manually below.
+                    </p>
+                  </div>
+                )
               ) : (
                 <ButtonCool
                   onClick={stopScanning}
