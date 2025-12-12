@@ -3,8 +3,7 @@
 import React, { useState } from 'react';
 import { useWalletConnect, type ConnectedApp } from '../hooks/useWalletConnect';
 import { QRScanner } from './QRScanner';
-import { ButtonCool } from './ui/button-cool';
-import { getChainById } from '../utils/chains';
+import { sdk } from '@farcaster/miniapp-sdk';
 
 export function ConnectedApps() {
   const { connectedApps, disconnectApp, disconnectAll, connectViaURI, connecting, error, isBridgeReady } = useWalletConnect();
@@ -14,7 +13,6 @@ export function ConnectedApps() {
   const [uriError, setUriError] = useState<string | null>(null);
 
   const handleScan = async (uri: string) => {
-    // Scanner will close itself after scanning
     await connectViaURI(uri);
   };
 
@@ -34,7 +32,7 @@ export function ConnectedApps() {
 
     try {
       await connectViaURI(trimmedURI);
-      setManualURI(''); // Clear input on success
+      setManualURI('');
     } catch (err: any) {
       setUriError(err.message || 'Failed to connect');
     }
@@ -49,244 +47,163 @@ export function ConnectedApps() {
     }
   };
 
+  const handleFollowOliseh = async () => {
+    try {
+      await sdk.actions.viewProfile({ fid: 810782 });
+    } catch (error) {
+      console.error('Failed to view profile:', error);
+    }
+  };
+
   if (showScanner) {
     return <QRScanner onScan={handleScan} onClose={() => setShowScanner(false)} />;
   }
 
   return (
-    <div className="w-full max-w-[40em] mx-auto px-4">
-      {/* Header Card */}
-      <div className="group relative w-full mb-[1.5em]">
-        {/* Pattern Overlays */}
-        <div 
-          className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-50 transition-opacity duration-[400ms] z-[1]"
-          style={{
-            backgroundImage: 'linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px), linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px)',
-            backgroundSize: '0.5em 0.5em'
-          }}
-        />
-        
-        {/* Main Card */}
-        <div 
-          className="relative bg-white border-[0.35em] border-[#050505] rounded-[0.6em] shadow-[0.7em_0.7em_0_#000000] transition-all duration-[400ms] overflow-hidden z-[2] group-hover:shadow-[1em_1em_0_#000000] group-hover:-translate-x-[0.4em] group-hover:-translate-y-[0.4em] group-hover:scale-[1.02]"
-          style={{ boxShadow: 'inset 0 0 0 0.15em rgba(0, 0, 0, 0.05)' }}
-        >
-          {/* Accent Corner */}
-          <div className="absolute -top-[1em] -right-[1em] w-[4em] h-[4em] bg-[#10b981] rotate-45 z-[1]" />
-          <div className="absolute top-[0.4em] right-[0.4em] text-[#050505] text-[1.2em] font-bold z-[2]">🔌</div>
+    <div className="w-full max-w-[40em] mx-auto px-4 py-6">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">Connected Apps</h1>
+        <p className="text-sm text-gray-600">
+          {connectedApps.length} {connectedApps.length === 1 ? 'app' : 'apps'} connected
+        </p>
+      </div>
 
-          {/* Title Area */}
-          <div 
-            className="relative px-[1.4em] py-[1.4em] text-white font-extrabold border-b-[0.35em] border-[#050505] uppercase tracking-[0.05em] z-[2]"
-            style={{ 
-              backgroundColor: '#10b981',
-              backgroundImage: 'repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1) 0.5em, transparent 0.5em, transparent 1em)',
-              backgroundBlendMode: 'overlay'
-            }}
+      {/* Connect Section */}
+      <div className="bg-white rounded-xl p-6 border border-gray-200 mb-6">
+        <div className="space-y-4">
+          <button
+            onClick={() => setShowScanner(true)}
+            disabled={connecting || !isBridgeReady}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-xl transition-colors"
           >
-            <div className="flex items-center justify-between">
-              <span className="text-[1.2em]">Bridge Gateway</span>
-              {isBridgeReady && (
-                <span className="bg-white text-[#050505] text-[0.6em] font-extrabold px-[0.8em] py-[0.4em] border-[0.15em] border-[#050505] rounded-[0.3em] shadow-[0.2em_0.2em_0_#000000] uppercase tracking-[0.1em] rotate-[3deg]">
-                  Ready
-                </span>
-              )}
-            </div>
-          </div>
+            {connecting ? 'Connecting...' : '📷 Scan QR Code'}
+          </button>
 
-          {/* Body */}
-          <div className="relative px-[1.5em] py-[1.5em] z-[2]">
-            <div className="mb-[1.5em] p-[1em] bg-[#dbeafe] border-[0.2em] border-[#2563eb] rounded-[0.4em] shadow-[0.2em_0.2em_0_#000000]">
-              <p className="text-[0.9em] font-extrabold text-[#1e40af] mb-[0.3em]">
-                🌉 Gateway Bridge Active
-              </p>
-              <p className="text-[0.85em] font-semibold text-[#1e3a8a]">
-                Scan QR codes from external Web3 apps to connect them to your Farcaster wallet. All requests are bridged through Plug It.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-[1em]">
-              <ButtonCool
-                onClick={() => setShowScanner(true)}
-                text="Scan QR Code from dApp"
-                bgColor="#2563eb"
-                hoverBgColor="#1d4ed8"
-                borderColor="#050505"
-                textColor="#ffffff"
-                size="lg"
-                className="w-full"
-                disabled={connecting || !isBridgeReady}
-              />
-
-              {/* Manual URI Input */}
-              <div className="border-t-[0.2em] border-[#050505] pt-[1em]">
-                <p className="text-[0.9em] font-extrabold text-[#050505] mb-[0.8em] text-center">
-                  Or Paste Connection Link
-                </p>
-                <textarea
-                  value={manualURI}
-                  onChange={(e) => {
-                    setManualURI(e.target.value);
-                    setUriError(null);
-                  }}
-                  placeholder="wc:85fa6e9c931ef08c70704c59a6dc032ed1100d4083fd1aae73ea1092f445fb52@2?..."
-                  className="w-full px-[1em] py-[0.8em] border-[0.2em] border-[#050505] rounded-[0.4em] font-mono text-[0.85em] resize-none focus:outline-none focus:ring-2 focus:ring-[#2563eb] mb-[0.8em]"
-                  rows={3}
-                  disabled={connecting || !isBridgeReady}
-                />
-                {uriError && (
-                  <div className="mb-[0.8em] p-2 bg-[#fee2e2] border-[0.15em] border-[#ef4444] rounded-[0.4em]">
-                    <p className="text-[0.85em] font-semibold text-[#991b1b]">{uriError}</p>
-                  </div>
-                )}
-                <ButtonCool
-                  onClick={handleManualConnect}
-                  text="Connect via URI"
-                  bgColor="#10b981"
-                  hoverBgColor="#059669"
-                  borderColor="#050505"
-                  textColor="#ffffff"
-                  size="md"
-                  className="w-full"
-                  disabled={connecting || !isBridgeReady || !manualURI.trim()}
-                />
+          {/* Manual URI Input */}
+          <div className="space-y-2 pt-4 border-t border-gray-200">
+            <textarea
+              value={manualURI}
+              onChange={(e) => {
+                setManualURI(e.target.value);
+                setUriError(null);
+              }}
+              placeholder="Paste WalletConnect URI (wc:...)"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              rows={2}
+              disabled={connecting || !isBridgeReady}
+            />
+            {uriError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-600">{uriError}</p>
               </div>
-
-              {!isBridgeReady && (
-                <div className="p-3 bg-[#fee2e2] border-[0.15em] border-[#ef4444] rounded-[0.4em] shadow-[0.2em_0.2em_0_#000000]">
-                  <p className="text-[0.9em] font-semibold text-[#991b1b]">
-                    Please connect your Farcaster wallet first to activate the bridge
-                  </p>
-                </div>
-              )}
-
-              {error && (
-                <div className="p-3 bg-[#fee2e2] border-[0.15em] border-[#ef4444] rounded-[0.4em] shadow-[0.2em_0.2em_0_#000000]">
-                  <p className="text-[0.9em] font-semibold text-[#991b1b]">{error}</p>
-                </div>
-              )}
-
-              {connectedApps.length > 0 && (
-                <ButtonCool
-                  onClick={disconnectAll}
-                  text="Disconnect All"
-                  bgColor="#ef4444"
-                  hoverBgColor="#dc2626"
-                  borderColor="#050505"
-                  textColor="#ffffff"
-                  size="md"
-                  className="w-full"
-                />
-              )}
-            </div>
+            )}
+            <button
+              onClick={handleManualConnect}
+              disabled={connecting || !isBridgeReady || !manualURI.trim()}
+              className="w-full bg-gray-100 hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-400 text-gray-900 font-medium py-2.5 px-4 rounded-lg transition-colors text-sm"
+            >
+              {connecting ? 'Connecting...' : 'Connect via URI'}
+            </button>
           </div>
 
-          {/* Decorative Elements */}
-          <div className="absolute w-[2.5em] h-[2.5em] bg-[#4d61ff] border-[0.15em] border-[#050505] rounded-[0.3em] rotate-45 -bottom-[1.2em] right-[2em] z-0" />
-          <div className="absolute bottom-0 left-0 w-[1.5em] h-[1.5em] bg-white border-r-[0.25em] border-t-[0.25em] border-[#050505] rounded-tl-[0.5em] z-[1]" />
+          {!isBridgeReady && (
+            <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm text-yellow-800">
+                Please connect your wallet first to activate the bridge
+              </p>
+            </div>
+          )}
+
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-600">{error}</p>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Connected Apps List */}
       {connectedApps.length === 0 ? (
-        <div className="group relative w-full">
-          <div 
-            className="relative bg-white border-[0.2em] border-[#050505] rounded-[0.4em] shadow-[0.3em_0.3em_0_#000000] overflow-hidden"
-            style={{ boxShadow: 'inset 0 0 0 0.1em rgba(0, 0, 0, 0.03)' }}
-          >
-            <div className="px-[1.5em] py-[2em] text-center">
-              <p className="text-[#050505] text-[1em] font-semibold mb-[0.5em]">No apps connected</p>
-              <p className="text-[0.9em] text-[#6b7280]">
-                Scan a QR code to connect to a dApp
-              </p>
-            </div>
-          </div>
+        <div className="bg-white rounded-xl p-8 border border-gray-200 text-center">
+          <div className="text-4xl mb-3">🔌</div>
+          <p className="text-gray-900 font-medium mb-1">No apps connected</p>
+          <p className="text-sm text-gray-600">
+            Scan a QR code to connect to a dApp
+          </p>
         </div>
       ) : (
-        <div className="flex flex-col gap-[1em]">
-          {connectedApps.map((app) => {
-            const chain = getChainById(app.chainId);
-            return (
-              <div key={app.id} className="group relative">
-                {/* Pattern Overlay */}
-                <div 
-                  className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-30 transition-opacity duration-[400ms] z-[1] rounded-[0.4em]"
-                  style={{
-                    backgroundImage: 'linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px), linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px)',
-                    backgroundSize: '0.5em 0.5em'
-                  }}
-                />
-                
-                {/* Main Card */}
-                <div 
-                  className="relative bg-white border-[0.2em] border-[#050505] rounded-[0.4em] shadow-[0.3em_0.3em_0_#000000] transition-all duration-[300ms] overflow-hidden z-[2] group-hover:shadow-[0.4em_0.4em_0_#000000] group-hover:-translate-x-[0.2em] group-hover:-translate-y-[0.2em]"
-                  style={{ boxShadow: 'inset 0 0 0 0.1em rgba(0, 0, 0, 0.03)' }}
-                >
-                  <div className="px-[1.2em] py-[1em]">
-                    <div className="flex items-start justify-between mb-[0.75em]">
-                      <div className="flex items-start gap-[0.8em] flex-1">
-                        {app.icon ? (
-                          <img
-                            src={app.icon}
-                            alt={app.name}
-                            className="w-[2.5em] h-[2.5em] rounded-[0.3em] border-[0.15em] border-[#050505] object-cover"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = 'none';
-                            }}
-                          />
-                        ) : (
-                          <div className="w-[2.5em] h-[2.5em] bg-[#2563eb] rounded-[0.3em] border-[0.15em] border-[#050505] flex items-center justify-center">
-                            <span className="text-white font-bold text-[1.2em]">🌐</span>
-                          </div>
-                        )}
-                        <div className="flex-1">
-                          <h3 className="text-[1em] font-extrabold text-[#050505] mb-[0.3em]">
-                            {app.name}
-                          </h3>
-                          <a
-                            href={app.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[0.85em] font-semibold text-[#2563eb] hover:text-[#1d4ed8] transition-colors duration-200 break-all"
-                          >
-                            {app.url}
-                          </a>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-[0.6em] mb-[0.75em] text-[0.85em]">
-                      <div>
-                        <span className="font-semibold text-[#6b7280]">Chain: </span>
-                        <span className="font-bold text-[#050505]">{chain?.name || 'Unknown'}</span>
-                      </div>
-                      <div>
-                        <span className="font-semibold text-[#6b7280]">Accounts: </span>
-                        <span className="font-bold text-[#050505]">{app.accounts.length}</span>
-                      </div>
-                    </div>
-
-                    <div className="pt-[0.75em] border-t-[0.15em] border-[#050505]">
-                      <ButtonCool
-                        onClick={() => handleDisconnect(app)}
-                        text={disconnectingId === app.id ? 'Disconnecting...' : 'Disconnect'}
-                        bgColor="#ef4444"
-                        hoverBgColor="#dc2626"
-                        borderColor="#050505"
-                        textColor="#ffffff"
-                        size="sm"
-                        className="w-full"
-                        disabled={disconnectingId === app.id}
-                      />
-                    </div>
+        <div className="space-y-3 mb-6">
+          {connectedApps.map((app) => (
+            <div
+              key={app.id}
+              className="bg-white rounded-xl p-4 border border-gray-200 hover:border-gray-300 transition-colors"
+            >
+              <div className="flex items-start gap-4">
+                {/* App Icon/Profile Image */}
+                {app.icon ? (
+                  <img
+                    src={app.icon}
+                    alt={app.name}
+                    className="w-14 h-14 rounded-xl object-cover border border-gray-200"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <div className="w-14 h-14 bg-blue-100 rounded-xl flex items-center justify-center border border-gray-200">
+                    <span className="text-blue-600 text-2xl">🌐</span>
                   </div>
+                )}
+                
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-gray-900 mb-1 truncate">{app.name}</h3>
+                  <a
+                    href={app.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-600 hover:text-blue-700 truncate block mb-2"
+                  >
+                    {app.url}
+                  </a>
+                  <div className="flex items-center gap-4 text-xs text-gray-500 mb-3">
+                    <span>Chain: {app.chainId}</span>
+                    <span>•</span>
+                    <span>{app.accounts.length} account{app.accounts.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  <button
+                    onClick={() => handleDisconnect(app)}
+                    disabled={disconnectingId === app.id}
+                    className="text-sm text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
+                  >
+                    {disconnectingId === app.id ? 'Disconnecting...' : 'Disconnect'}
+                  </button>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ))}
+          
+          {connectedApps.length > 0 && (
+            <button
+              onClick={disconnectAll}
+              className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-medium py-2.5 px-4 rounded-lg transition-colors text-sm border border-red-200"
+            >
+              Disconnect All
+            </button>
+          )}
         </div>
       )}
+
+      {/* Follow Button */}
+      <div className="pt-4 border-t border-gray-200">
+        <button
+          onClick={handleFollowOliseh}
+          className="w-full bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium py-2.5 px-4 rounded-lg transition-colors text-sm flex items-center justify-center gap-2"
+        >
+          <span>👤</span>
+          <span>Follow @oliseh</span>
+        </button>
+      </div>
     </div>
   );
 }
-

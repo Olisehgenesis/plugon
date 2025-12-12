@@ -1,20 +1,31 @@
 'use client'
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PlugItLanding } from '../components/PlugItLanding';
-import { ScanPage } from '../components/ScanPage';
-import { Help } from '../components/Help';
+import { ConnectedApps } from '../components/ConnectedApps';
 import { BottomNav } from '../components/BottomNav';
 import { MiniAppInit } from '../components/MiniAppInit';
 import { MetaTags } from '../components/MetaTags';
 import { useFarcasterWallet } from '../hooks/useFarcasterWallet';
+import { useWalletConnect } from '../hooks/useWalletConnect';
 import '../App.css';
 
-type View = 'home' | 'scan' | 'help';
+type View = 'home' | 'apps';
 
 export default function Home() {
   const { isConnected } = useFarcasterWallet();
+  const { connectedApps } = useWalletConnect();
   const [currentView, setCurrentView] = useState<View>('home');
+
+  // Navigate to apps after successful connection
+  useEffect(() => {
+    if (isConnected && connectedApps.length > 0 && currentView === 'home') {
+      // Small delay to let UI update
+      setTimeout(() => {
+        setCurrentView('apps');
+      }, 500);
+    }
+  }, [isConnected, connectedApps.length, currentView]);
 
   // Always show navigation when wallet is connected
   if (isConnected) {
@@ -24,8 +35,7 @@ export default function Home() {
         <MiniAppInit />
         <main className="main-with-bottom-nav">
           {currentView === 'home' && <PlugItLanding />}
-          {currentView === 'scan' && <ScanPage />}
-          {currentView === 'help' && <Help />}
+          {currentView === 'apps' && <ConnectedApps />}
         </main>
         <BottomNav currentView={currentView} onViewChange={setCurrentView} />
       </div>
