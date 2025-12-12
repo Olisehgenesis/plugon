@@ -1,0 +1,31 @@
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjgxMDc4MiwidHlwZSI6ImF1dGgiLCJrZXkiOiIweDAzQzI1RTVGYTNiMjIwRjdhRDExODA5MTQ5YjA2OTg1NkRFMDhlNGEifQ",
+    "payload": "eyJkb21haW4iOiJwbHVnb24udmVyY2VsLmFwcCJ9",
+    "signature": "KrKyuvOyft9zxMk8TUBSh74n6axvk+59VjvGx+YL/6sD8iOBqBo4+RvOPvZMSh7v3MnWLJjo1Kbg07PV5wByVBw="
+  },
+  "miniapp": {
+    "version": "1",
+    "name": "Plug It",
+    "iconUrl": "https://plugon.vercel.app/icon.png",
+    "homeUrl": "https://plugon.vercel.app/",
+    "imageUrl": "https://plugon.vercel.app/og-image.svg",
+    "buttonTitle": "🔌 Plug It",
+    "splashImageUrl": "https://plugon.vercel.app/icon.svg",
+    "splashBackgroundColor": "#2563eb",
+    "description": "Bridge between Web3 apps and Farcaster wallet. Connect to any dApp via WalletConnect and swap tokens across chains.",
+    "requiredChains": [
+      "eip155:1",
+      "eip155:137",
+      "eip155:42161",
+      "eip155:8453",
+      "eip155:10",
+      "eip155:42220"
+    ],
+    "requiredCapabilities": [
+      "wallet.getEthereumProvider",
+      "actions.swapToken"
+    ]
+  }
+}
+
