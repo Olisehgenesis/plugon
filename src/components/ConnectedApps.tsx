@@ -194,14 +194,14 @@ export function ConnectedApps() {
         </div>
       )}
 
-      {/* Follow Button */}
+      {/* View Profile Button */}
       <div className="pt-4 border-t border-gray-200">
         <button
           onClick={handleFollowOliseh}
           className="w-full bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium py-2.5 px-4 rounded-lg transition-colors text-sm flex items-center justify-center gap-2"
         >
           <span>👤</span>
-          <span>Follow @oliseh</span>
+          <span>View @oliseh's Profile</span>
         </button>
       </div>
     </div>
