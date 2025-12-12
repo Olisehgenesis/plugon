@@ -62,6 +62,21 @@
   margin: 0 auto;
 }
 
+.main-with-bottom-nav {
+  padding: 2rem 1rem;
+  min-height: calc(100vh - 100px);
+  max-width: 1400px;
+  margin: 0 auto;
+  padding-bottom: 6.5rem; /* Space for bottom nav */
+}
+
+/* Safe area support for devices with notches */
+@supports (padding: max(0px)) {
+  .safe-area-inset-bottom {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
+
 @media (max-width: 768px) {
   .nav {
     flex-direction: column;

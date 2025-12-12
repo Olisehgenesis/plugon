@@ -91,7 +91,7 @@ export function SwapWidget() {
         });
       }
 
-      if (txHash) {
+      if (txHash && fromToken && toToken) {
         // Save to history
         const { saveTransaction } = await import('../services/storage');
         const { getChainById } = await import('../utils/chains');

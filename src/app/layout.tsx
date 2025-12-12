@@ -4,13 +4,13 @@ import '../index.css'
 // Mini App Embed metadata for sharing
 const miniappEmbed = {
   version: "1",
-  imageUrl: "https://plugit.app/og-image.svg", // SVG version works in modern browsers
+  imageUrl: "https://plugon.vercel.app/og-image.svg", // SVG version works in modern browsers
   button: {
     title: "🔌 Plug It",
     action: {
       type: "launch_miniapp",
       name: "Plug It",
-      splashImageUrl: "https://plugit.app/icon.svg", // SVG version works in modern browsers
+      splashImageUrl: "https://plugon.vercel.app/icon.svg", // SVG version works in modern browsers
       splashBackgroundColor: "#2563eb"
     }
   }

@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
-// @ts-ignore - WalletConnect types will be available after npm install
-import { EthereumProvider } from '@walletconnect/ethereum-provider';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Core } from '@walletconnect/core';
+import { SignClient } from '@walletconnect/sign-client';
+import type { SignClientTypes } from '@walletconnect/types';
+import { buildApprovedNamespaces, getSdkError } from '@walletconnect/utils';
 import { sdk } from '@farcaster/miniapp-sdk';
 import { useFarcasterWallet } from './useFarcasterWallet';
 
@@ -16,7 +18,7 @@ export interface ConnectedApp {
 }
 
 interface WalletConnectState {
-  provider: EthereumProvider | null;
+  signClient: InstanceType<typeof SignClient> | null;
   connected: boolean;
   connecting: boolean;
   error: string | null;
@@ -28,9 +30,9 @@ interface WalletConnectState {
 }
 
 export function useWalletConnect() {
-  const { address, isConnected: farcasterConnected, requestSign } = useFarcasterWallet();
+  const { address, isConnected: farcasterConnected, chainId } = useFarcasterWallet();
   const [state, setState] = useState<WalletConnectState>({
-    provider: null,
+    signClient: null,
     connected: false,
     connecting: false,
     error: null,
@@ -38,6 +40,8 @@ export function useWalletConnect() {
   });
 
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>([]);
+  const coreRef = useRef<InstanceType<typeof Core> | null>(null);
+  const signClientRef = useRef<InstanceType<typeof SignClient> | null>(null);
 
   // Load connected apps from storage on mount
   useEffect(() => {
@@ -85,9 +89,9 @@ export function useWalletConnect() {
     [farcasterConnected, address]
   );
 
-  // Initialize WalletConnect provider as a bridge
-  const initializeProvider = useCallback(async () => {
-    if (!farcasterConnected) {
+  // Initialize WalletConnect SignClient (wallet-side)
+  const initializeSignClient = useCallback(async () => {
+    if (!farcasterConnected || !address) {
       setState((prev) => ({
         ...prev,
         error: 'Please connect Farcaster wallet first',
@@ -95,12 +99,22 @@ export function useWalletConnect() {
       return;
     }
 
+    if (signClientRef.current) {
+      return; // Already initialized
+    }
+
     try {
-      const provider = await EthereumProvider.init({
-        projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'demo-project-id',
-        chains: [1, 137, 42161, 8453], // Ethereum, Polygon, Arbitrum, Base
-        optionalChains: [10, 56], // Optimism, BSC
-        showQrModal: false, // We'll handle QR display ourselves
+      const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'demo-project-id';
+      
+      // Initialize Core
+      const core = new Core({
+        projectId,
+      });
+      coreRef.current = core;
+
+      // Initialize SignClient (wallet-side)
+      const signClient = await SignClient.init({
+        core,
         metadata: {
           name: 'Plug It - Farcaster Bridge',
           description: 'Bridge between Web3 apps and Farcaster wallet',
@@ -108,88 +122,126 @@ export function useWalletConnect() {
           icons: [`${typeof window !== 'undefined' ? window.location.origin : ''}/icon.png`],
         },
       });
+      signClientRef.current = signClient;
 
-      // Handle incoming session proposals - auto-approve if Farcaster wallet is connected
-      provider.on('session_proposal', async (event: any) => {
+      // Handle session proposals (when dApps want to connect)
+      signClient.on('session_proposal', async (proposal) => {
         try {
-          const { id, params } = event;
-          // Auto-approve session proposals if Farcaster wallet is connected
-          const session = await provider.approveSession({
-            accounts: [address!],
-            chainId: 1,
-          });
+          const { id, params } = proposal;
           
-          // Save connected app
-          if (session) {
-            const newApp: ConnectedApp = {
-              id: session.topic,
-              name: params.proposer.metadata?.name || 'Unknown App',
-              url: params.proposer.metadata?.url || '',
-              icon: params.proposer.metadata?.icons?.[0],
-              topic: session.topic,
-              chainId: session.chainId || 1,
-              accounts: session.accounts || [address!],
-              connectedAt: Date.now(),
-            };
+          // Build approved namespaces based on Farcaster wallet capabilities
+          const approvedNamespaces = buildApprovedNamespaces({
+            proposal: params,
+            supportedNamespaces: {
+              eip155: {
+                chains: ['eip155:1', 'eip155:137', 'eip155:42161', 'eip155:8453', 'eip155:10', 'eip155:56'],
+                methods: [
+                  'eth_accounts',
+                  'eth_requestAccounts',
+                  'eth_sendTransaction',
+                  'eth_signTransaction',
+                  'eth_sign',
+                  'eth_signTypedData',
+                  'eth_signTypedData_v3',
+                  'eth_signTypedData_v4',
+                  'personal_sign',
+                  'wallet_switchEthereumChain',
+                  'wallet_addEthereumChain',
+                  'wallet_getPermissions',
+                  'wallet_requestPermissions',
+                  'wallet_registerOnboarding',
+                  'wallet_watchAsset',
+                  'wallet_sendCalls',
+                  'wallet_getCallsStatus',
+                  'wallet_showCallsStatus',
+                  'wallet_getCapabilities',
+                ],
+                events: ['chainChanged', 'accountsChanged', 'message', 'disconnect', 'connect'],
+                accounts: [
+                  `eip155:${chainId || 1}:${address}`,
+                ],
+              },
+            },
+          });
 
-            const updatedApps = [...connectedApps.filter(app => app.topic !== session.topic), newApp];
-            saveConnectedApps(updatedApps);
-          }
+          // Approve the session
+          const session = await signClient.approve({
+            id,
+            namespaces: approvedNamespaces,
+          });
+
+          // Get the full session with peer metadata
+          const fullSession = signClient.session.get(session.topic);
+          const peerMetadata = params.proposer.metadata || {};
+
+          // Save the connected app
+          const newApp: ConnectedApp = {
+            id: session.topic,
+            name: peerMetadata.name || 'Unknown App',
+            url: peerMetadata.url || '',
+            icon: peerMetadata.icons?.[0],
+            topic: session.topic,
+            chainId: chainId || 1,
+            accounts: [address],
+            connectedAt: Date.now(),
+          };
+
+          const updatedApps = [...connectedApps.filter(app => app.topic !== session.topic), newApp];
+          saveConnectedApps(updatedApps);
+          setState((prev) => ({ ...prev, connected: true, connecting: false }));
+
+          console.log('Session approved:', session);
         } catch (error: any) {
-          console.error('Session proposal error:', error);
+          console.error('Error approving session:', error);
+          // Reject the session
+          try {
+            await signClient.reject({
+              id: proposal.id,
+              reason: getSdkError('USER_REJECTED'),
+            });
+          } catch (rejectError) {
+            console.error('Failed to reject session:', rejectError);
+          }
+          setState((prev) => ({
+            ...prev,
+            error: error.message || 'Failed to approve session',
+            connecting: false,
+          }));
         }
       });
 
-      provider.on('display_uri', (uri: string) => {
-        console.log('WalletConnect URI:', uri);
-      });
-
-      provider.on('connect', () => {
-        setState((prev) => ({ ...prev, connected: true, connecting: false }));
-      });
-
-      provider.on('disconnect', () => {
-        setState((prev) => ({ ...prev, connected: false, provider: null }));
-      });
-
-      provider.on('session_delete', () => {
-        setState((prev) => ({ ...prev, connected: false, provider: null }));
-      });
-
-      // Handle RPC requests from connected apps - bridge to Farcaster wallet
-      provider.on('session_request', async (event: any) => {
+      // Handle session requests (when dApps want to sign/transact)
+      signClient.on('session_request', async (event) => {
         try {
-          const { id, topic, params } = event;
+          const { topic, params, id } = event;
           const { request } = params;
-          
-          if (request) {
-            const result = await bridgeRequestToFarcaster({
+
+          // Bridge the request to Farcaster wallet
+          const result = await bridgeRequestToFarcaster({
+            id,
+            method: request.method,
+            params: request.params || [],
+          });
+
+          // Respond to the request
+          await signClient.respond({
+            topic,
+            response: {
               id,
-              method: request.method,
-              params: request.params || [],
-            });
-            
-            // Respond to the request
-            await provider.respondSessionRequest({
-              topic,
-              response: {
-                id,
-                jsonrpc: '2.0',
-                result,
-              },
-            });
-            
-            console.log('Bridged request to Farcaster:', request.method, result);
-          }
+              jsonrpc: '2.0',
+              result,
+            },
+          });
+
+          console.log('Bridged request to Farcaster:', request.method, result);
         } catch (error: any) {
           console.error('RPC request bridge error:', error);
           // Reject the request on error
           try {
-            const { id, topic } = event;
-            await provider.respondSessionRequest({
-              topic,
+            await signClient.respond({
+              topic: event.topic,
               response: {
-                id,
+                id: event.id,
                 jsonrpc: '2.0',
                 error: {
                   code: 5000,
@@ -203,15 +255,50 @@ export function useWalletConnect() {
         }
       });
 
-      setState((prev) => ({ ...prev, provider }));
+      // Handle session deletion
+      signClient.on('session_delete', (event) => {
+        const { topic } = event;
+        const updatedApps = connectedApps.filter((app) => app.topic !== topic);
+        saveConnectedApps(updatedApps);
+        setState((prev) => ({ ...prev, connected: updatedApps.length > 0 }));
+      });
+
+      // Load existing sessions
+      const sessions = signClient.session.getAll();
+      if (sessions.length > 0) {
+        const apps: ConnectedApp[] = sessions.map((session) => {
+          const accounts = session.namespaces.eip155?.accounts || [];
+          const firstAccount = accounts[0] || '';
+          const chainIdMatch = firstAccount.match(/eip155:(\d+):/);
+          const chainId = chainIdMatch ? parseInt(chainIdMatch[1]) : 1;
+          
+          // Get peer metadata from session
+          const peerMetadata = (session as any).peer?.metadata || {};
+
+          return {
+            id: session.topic,
+            name: peerMetadata.name || 'Unknown App',
+            url: peerMetadata.url || '',
+            icon: peerMetadata.icons?.[0],
+            topic: session.topic,
+            chainId,
+            accounts: accounts.map((acc) => acc.split(':')[2] || ''),
+            connectedAt: Date.now(),
+          };
+        });
+        saveConnectedApps(apps);
+        setState((prev) => ({ ...prev, connected: apps.length > 0 }));
+      }
+
+      setState((prev) => ({ ...prev, signClient }));
     } catch (error: any) {
       setState((prev) => ({
         ...prev,
-        error: error.message || 'Failed to initialize WalletConnect bridge',
+        error: error.message || 'Failed to initialize WalletConnect wallet',
         connecting: false,
       }));
     }
-  }, [farcasterConnected, address, connectedApps, bridgeRequestToFarcaster, saveConnectedApps]);
+  }, [farcasterConnected, address, chainId, connectedApps, bridgeRequestToFarcaster, saveConnectedApps]);
 
   // Connect via QR code URI (from external dApp)
   const connectViaURI = useCallback(
@@ -224,18 +311,18 @@ export function useWalletConnect() {
         return;
       }
 
-      let provider = state.provider;
+      let signClient = signClientRef.current;
       
-      if (!provider) {
-        await initializeProvider();
+      if (!signClient) {
+        await initializeSignClient();
         await new Promise(resolve => setTimeout(resolve, 100));
-        provider = state.provider;
+        signClient = signClientRef.current;
       }
 
-      if (!provider) {
+      if (!signClient) {
         setState((prev) => ({
           ...prev,
-          error: 'Bridge not initialized',
+          error: 'Wallet not initialized',
         }));
         return;
       }
@@ -243,33 +330,9 @@ export function useWalletConnect() {
       setState((prev) => ({ ...prev, connecting: true, error: null }));
 
       try {
-        // Connect to external dApp via WalletConnect
-        await provider.connect({
-          uri,
-          optionalChains: [1, 137, 42161, 8453],
-        });
-
-        // Wait for session to be established
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // Extract session info
-        const session = provider.session;
-        if (session) {
-          const newApp: ConnectedApp = {
-            id: session.topic,
-            name: session.peer.metadata.name || 'Unknown App',
-            url: session.peer.metadata.url || '',
-            icon: session.peer.metadata.icons?.[0],
-            topic: session.topic,
-            chainId: session.chainId || 1,
-            accounts: session.accounts || [address!],
-            connectedAt: Date.now(),
-          };
-
-          const updatedApps = [...connectedApps.filter(app => app.topic !== session.topic), newApp];
-          saveConnectedApps(updatedApps);
-          setState((prev) => ({ ...prev, connected: true, connecting: false }));
-        }
+        // Pair with the dApp using the URI
+        await signClient.core.pairing.pair({ uri });
+        // The session_proposal event will be triggered automatically
       } catch (error: any) {
         setState((prev) => ({
           ...prev,
@@ -278,15 +341,19 @@ export function useWalletConnect() {
         }));
       }
     },
-    [state.provider, connectedApps, initializeProvider, saveConnectedApps, farcasterConnected, address]
+    [farcasterConnected, initializeSignClient]
   );
 
   // Disconnect from an app
   const disconnectApp = useCallback(
     async (topic: string) => {
       try {
-        if (state.provider && state.provider.session?.topic === topic) {
-          await state.provider.disconnect();
+        const signClient = signClientRef.current;
+        if (signClient) {
+          await signClient.disconnect({
+            topic,
+            reason: getSdkError('USER_DISCONNECTED'),
+          });
         }
 
         const updatedApps = connectedApps.filter((app) => app.topic !== topic);
@@ -298,36 +365,43 @@ export function useWalletConnect() {
         }));
       }
     },
-    [state.provider, connectedApps, saveConnectedApps]
+    [connectedApps, saveConnectedApps]
   );
 
   // Disconnect all apps
   const disconnectAll = useCallback(async () => {
     try {
-      if (state.provider) {
-        await state.provider.disconnect();
+      const signClient = signClientRef.current;
+      if (signClient) {
+        const sessions = signClient.session.getAll();
+        for (const session of sessions) {
+          await signClient.disconnect({
+            topic: session.topic,
+            reason: getSdkError('USER_DISCONNECTED'),
+          });
+        }
       }
       saveConnectedApps([]);
-      setState((prev) => ({ ...prev, connected: false, provider: null }));
+      setState((prev) => ({ ...prev, connected: false }));
     } catch (error: any) {
       setState((prev) => ({
         ...prev,
         error: error.message || 'Failed to disconnect all',
       }));
     }
-  }, [state.provider, saveConnectedApps]);
+  }, [saveConnectedApps]);
 
-  // Initialize bridge when Farcaster wallet connects
+  // Initialize wallet when Farcaster wallet connects
   useEffect(() => {
-    if (farcasterConnected && address && !state.provider) {
-      initializeProvider();
+    if (farcasterConnected && address && !signClientRef.current) {
+      initializeSignClient();
     }
-  }, [farcasterConnected, address, state.provider, initializeProvider]);
+  }, [farcasterConnected, address, initializeSignClient]);
 
   return {
     ...state,
     connectedApps,
-    initializeProvider,
+    initializeProvider: initializeSignClient,
     connectViaURI,
     disconnectApp,
     disconnectAll,
