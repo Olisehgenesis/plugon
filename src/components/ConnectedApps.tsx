@@ -201,7 +201,7 @@ export function ConnectedApps() {
           className="w-full bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium py-2.5 px-4 rounded-lg transition-colors text-sm flex items-center justify-center gap-2"
         >
           <span>👤</span>
-          <span>View @oliseh's Profile</span>
+          <span>View @oliseh&apos;s Profile</span>
         </button>
       </div>
     </div>
