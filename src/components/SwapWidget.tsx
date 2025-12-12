@@ -159,7 +159,7 @@ export function SwapWidget() {
             const status = parseInt(data.result.status, 16);
             const { updateTransactionStatus } = await import('../services/storage');
             if (status === 1) {
-              updateTransactionStatus(txHash, 'confirmed');
+              updateTransactionStatus(txHash, 'completed');
               showToast('Transaction confirmed!', 'success');
               confirmed = true;
             } else {
