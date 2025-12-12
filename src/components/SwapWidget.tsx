@@ -7,11 +7,13 @@ import { getSettings } from '../services/storage';
 import { QuoteDisplay } from './QuoteDisplay';
 import { TransactionReview } from './TransactionReview';
 import { ButtonCool } from './ui/button-cool';
+import { useToast } from '../contexts/ToastContext';
 import type { SwapQuote } from '../hooks/useSwapQuotes';
 
 export function SwapWidget() {
   const { address, isConnected, requestSign } = useFarcasterWallet();
   const { quotes, loading, error, fetchQuotes } = useSwapQuotes();
+  const { showToast } = useToast();
   const settings = getSettings();
 
   const [fromChain, setFromChain] = useState<string>(
@@ -116,10 +118,68 @@ export function SwapWidget() {
         setShowReview(false);
         setSelectedQuote(null);
         setFromAmount('');
-        alert(`Transaction submitted! Hash: ${txHash}`);
+        showToast(`Transaction submitted! Hash: ${txHash.slice(0, 10)}...`, 'pending');
+        
+        // Monitor transaction confirmation
+        monitorTransaction(txHash, fromChainObj!.id);
       }
     } catch (err: any) {
-      alert(`Swap failed: ${err.message}`);
+      showToast(`Swap failed: ${err.message}`, 'error');
+    }
+  };
+
+  const monitorTransaction = async (txHash: string, chainId: number) => {
+    try {
+      const chain = getChainById(chainId);
+      if (!chain?.rpc) return;
+
+      // Poll for transaction confirmation using RPC
+      let confirmed = false;
+      const maxAttempts = 60; // 5 minutes (5 second intervals)
+      let attempts = 0;
+
+      while (!confirmed && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+        attempts++;
+
+        try {
+          const response = await fetch(chain.rpc, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'eth_getTransactionReceipt',
+              params: [txHash],
+              id: 1,
+            }),
+          });
+
+          const data = await response.json();
+          if (data.result) {
+            const status = parseInt(data.result.status, 16);
+            const { updateTransactionStatus } = await import('../services/storage');
+            if (status === 1) {
+              updateTransactionStatus(txHash, 'confirmed');
+              showToast('Transaction confirmed!', 'success');
+              confirmed = true;
+            } else {
+              updateTransactionStatus(txHash, 'failed');
+              showToast('Transaction failed', 'error');
+              confirmed = true;
+            }
+          }
+        } catch (err) {
+          // Continue polling on error
+          console.error('Error checking transaction:', err);
+        }
+      }
+
+      if (!confirmed) {
+        showToast('Transaction submitted! (checking status...)', 'info');
+      }
+    } catch (err: any) {
+      console.error('Error monitoring transaction:', err);
+      // Don't show error toast for monitoring failures
     }
   };
 

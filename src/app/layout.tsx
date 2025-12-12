@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import '../index.css'
+import { ToastProvider } from '../contexts/ToastContext'
 
 // Mini App Embed metadata for sharing
 const miniappEmbed = {
@@ -33,7 +34,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ToastProvider>
+          {children}
+        </ToastProvider>
+      </body>
     </html>
   )
 }

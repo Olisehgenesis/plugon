@@ -6,6 +6,70 @@ import { buildApprovedNamespaces, getSdkError } from '@walletconnect/utils';
 import { sdk } from '@farcaster/miniapp-sdk';
 import { useFarcasterWallet } from './useFarcasterWallet';
 
+// Toast notification function (will be set by context)
+let showToastFn: ((message: string, type: 'success' | 'error' | 'info' | 'pending') => void) | null = null;
+
+export function setToastFunction(fn: (message: string, type: 'success' | 'error' | 'info' | 'pending') => void) {
+  showToastFn = fn;
+}
+
+async function monitorWalletConnectTransaction(txHash: string, chainId: number) {
+  try {
+    const { getChainById } = await import('../utils/chains');
+    const chain = getChainById(chainId);
+    if (!chain?.rpc) {
+      if (showToastFn) showToastFn('Transaction submitted!', 'success');
+      return;
+    }
+
+    // Poll for transaction confirmation using RPC
+    let confirmed = false;
+    const maxAttempts = 60; // 5 minutes (5 second intervals)
+    let attempts = 0;
+
+    while (!confirmed && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+      attempts++;
+
+      try {
+        const response = await fetch(chain.rpc, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'eth_getTransactionReceipt',
+            params: [txHash],
+            id: 1,
+          }),
+        });
+
+        const data = await response.json();
+        if (data.result) {
+          const status = parseInt(data.result.status, 16);
+          if (status === 1) {
+            if (showToastFn) showToastFn('Transaction confirmed!', 'success');
+            confirmed = true;
+          } else {
+            if (showToastFn) showToastFn('Transaction failed', 'error');
+            confirmed = true;
+          }
+        }
+      } catch (err) {
+        // Continue polling on error
+        console.error('[WalletConnect] Error checking transaction:', err);
+      }
+    }
+
+    if (!confirmed && showToastFn) {
+      showToastFn('Transaction submitted! (checking status...)', 'info');
+    }
+  } catch (err: any) {
+    console.error('[WalletConnect] Error monitoring transaction:', err);
+    // Show success anyway since transaction was submitted
+    if (showToastFn) showToastFn('Transaction submitted!', 'success');
+  }
+}
+
 export interface ConnectedApp {
   id: string;
   name: string;
@@ -432,6 +496,12 @@ export function useWalletConnect() {
 
           // Bridge the request to wallet (Farcaster or injected)
           console.log('[WalletConnect] Bridging request:', request.method);
+          
+          // Show pending toast for transactions
+          if (request.method === 'eth_sendTransaction' && showToastFn) {
+            showToastFn('Transaction pending...', 'pending');
+          }
+          
           const result = await bridgeRequestToFarcaster({
             id,
             method: request.method,
@@ -450,6 +520,15 @@ export function useWalletConnect() {
           });
 
           console.log('[WalletConnect] Request bridged successfully:', request.method);
+          
+          // Monitor transaction if it's a sendTransaction
+          if (request.method === 'eth_sendTransaction' && result && typeof result === 'string') {
+            monitorWalletConnectTransaction(result, chainId || 1).catch(err => {
+              console.error('[WalletConnect] Error monitoring transaction:', err);
+            });
+          } else if (request.method === 'eth_sendTransaction' && showToastFn) {
+            showToastFn('Transaction submitted!', 'success');
+          }
         } catch (error: any) {
           console.error('[WalletConnect] RPC request bridge error:', error);
           // Reject the request on error
