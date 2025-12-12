@@ -1,10 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-// @ts-ignore - html5-qrcode doesn't have types
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
 import { sdk } from '@farcaster/miniapp-sdk';
-import { ButtonCool } from './ui/button-cool';
 
 interface QRScannerProps {
   onScan: (uri: string) => void;
@@ -13,67 +11,49 @@ interface QRScannerProps {
 
 export function QRScanner({ onScan, onClose }: QRScannerProps) {
   const [scanning, setScanning] = useState(false);
-  const [manualURI, setManualURI] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [cameraPermissionGranted, setCameraPermissionGranted] = useState(false);
   const [requestingPermission, setRequestingPermission] = useState(false);
-  const [platformType, setPlatformType] = useState<'web' | 'mobile' | null>(null);
-  const [isWebPlatform, setIsWebPlatform] = useState(false);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
-  const qrCodeRegionId = 'qr-reader';
+  const scannerContainerRef = useRef<HTMLDivElement | null>(null);
+  const qrScannerRef = useRef<Html5Qrcode | null>(null);
 
-  // Check platform and camera permission status on mount
+  // Check camera permission status on mount
   useEffect(() => {
     const checkContext = async () => {
       try {
         const context = await sdk.context;
-        
-        // Check platform type
-        const platform = context.client?.platformType;
-        setPlatformType(platform || null);
-        setIsWebPlatform(platform === 'web');
-        
-        // Check camera permission status
-        if (context.features?.cameraAndMicrophoneAccess) {
+        if (context && context.features && context.features.cameraAndMicrophoneAccess) {
           setCameraPermissionGranted(true);
         }
       } catch (error) {
-        // Context might not be available, that's okay
-        console.log('Could not check context:', error);
-        // Default to web if context unavailable
-        setIsWebPlatform(true);
+        // Context might not be available in all environments (e.g., web browser)
+        // This is expected and not an error
+        if (process.env.NODE_ENV === 'development') {
+          console.log('SDK context not available (expected in web browser):', error);
+        }
       }
     };
     checkContext();
   }, []);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (scannerRef.current && scanning) {
-        scannerRef.current.stop().catch(() => {});
-      }
+      stopScanning();
     };
-  }, [scanning]);
+  }, []);
 
   const requestCameraPermission = async () => {
-    // On web platforms, camera access is not supported via SDK
-    if (isWebPlatform) {
-      setError('Camera scanning is not available on web. Please enter the WalletConnect URI manually.');
-      return false;
-    }
-
     try {
       setRequestingPermission(true);
       setError(null);
-      
-      // Request camera and microphone access via Farcaster SDK
       await sdk.actions.requestCameraAndMicrophoneAccess();
       setCameraPermissionGranted(true);
       setRequestingPermission(false);
       return true;
     } catch (error: any) {
       console.error('Camera permission denied:', error);
-      setError('Camera access is required to scan QR codes. You can enter the URI manually instead.');
+      setError('Camera access is required to scan QR codes.');
       setRequestingPermission(false);
       return false;
     }
@@ -82,215 +62,400 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
   const startScanning = async () => {
     try {
       setError(null);
+      setScanning(true); // Set scanning state early so placeholder hides
 
-      // Request camera permission if not already granted
+      // Request camera permission if not already granted (for Farcaster SDK)
       if (!cameraPermissionGranted) {
-        const granted = await requestCameraPermission();
-        if (!granted) {
-          return; // Permission denied, user can use manual entry
+        try {
+          await requestCameraPermission();
+        } catch (permErr) {
+          // If Farcaster SDK permission fails, we'll still try browser permissions
+          console.log('Farcaster SDK permission not available, trying browser permissions');
         }
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
 
-      const html5QrCode = new Html5Qrcode(qrCodeRegionId);
-      scannerRef.current = html5QrCode;
-
-      await html5QrCode.start(
-        { facingMode: 'environment' },
-        {
-          fps: 10,
-          qrbox: { width: 250, height: 250 },
-        },
-        (decodedText: string) => {
-          if (decodedText.startsWith('wc:')) {
-            onScan(decodedText);
-            stopScanning();
-          }
-        },
-        (_errorMessage: string) => {
-          // Ignore scanning errors, just keep trying
+      // Clean up any existing scanner
+      if (qrScannerRef.current) {
+        try {
+          await qrScannerRef.current.stop();
+          await qrScannerRef.current.clear();
+        } catch (err) {
+          console.log('Error cleaning up previous scanner:', err);
         }
-      );
+        qrScannerRef.current = null;
+      }
 
-      setScanning(true);
+      if (!scannerContainerRef.current) {
+        throw new Error('Scanner container element not found');
+      }
+
+      // Check if HTTPS is required (for production)
+      if (typeof window !== 'undefined' && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        throw new Error('Camera access requires HTTPS. Please use https:// or test on localhost.');
+      }
+
+      // Ensure the container has an ID
+      const containerId = scannerContainerRef.current.id || 'html5-qrcode-scanner';
+      if (!scannerContainerRef.current.id) {
+        scannerContainerRef.current.id = containerId;
+      }
+
+      // Create HTML5 QR Code scanner instance
+      const qrScanner = new Html5Qrcode(containerId);
+
+      qrScannerRef.current = qrScanner;
+
+      // Start scanning with camera
+      // Try environment camera first (back camera on mobile), fallback to any camera
+      try {
+        await qrScanner.start(
+          { facingMode: 'environment' }, // Use back camera on mobile
+          {
+            fps: 10, // Frames per second
+            qrbox: { width: 250, height: 250 }, // Scanning area size
+            aspectRatio: 1.0, // Square aspect ratio
+            disableFlip: false, // Allow horizontal flip
+          },
+          async (decodedText, decodedResult) => {
+            // Success callback
+            console.log('QR Code scanned:', decodedText);
+            if (decodedText.startsWith('wc:')) {
+              // Immediately stop scanning and close camera
+              await stopScanning();
+              
+              // Call onScan to initiate connection
+              onScan(decodedText);
+              
+              // Close the scanner component after a brief delay to allow connection to start
+              setTimeout(() => {
+                onClose();
+              }, 300);
+            }
+          },
+          (errorMessage) => {
+            // Error callback - we can ignore most errors as they're just "no QR code found" messages
+            // Only log if it's a real error
+            if (errorMessage && !errorMessage.includes('NotFoundException')) {
+              console.log('Scan error:', errorMessage);
+            }
+          }
+        );
+      } catch (cameraError: any) {
+        // If environment camera fails, try user camera (front camera)
+        console.log('Environment camera failed, trying user camera:', cameraError);
+        await qrScanner.start(
+          { facingMode: 'user' },
+          {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+            aspectRatio: 1.0,
+            disableFlip: false,
+          },
+          async (decodedText, decodedResult) => {
+            console.log('QR Code scanned:', decodedText);
+            if (decodedText.startsWith('wc:')) {
+              // Immediately stop scanning and close camera
+              await stopScanning();
+              
+              // Call onScan to initiate connection
+              onScan(decodedText);
+              
+              // Close the scanner component after a brief delay to allow connection to start
+              setTimeout(() => {
+                onClose();
+              }, 300);
+            }
+          },
+          (errorMessage) => {
+            if (errorMessage && !errorMessage.includes('NotFoundException')) {
+              console.log('Scan error:', errorMessage);
+            }
+          }
+        );
+      }
+
+      console.log('Camera started successfully');
     } catch (err: any) {
-      setError('Camera access denied. Please enter URI manually.');
+      console.error('Failed to start camera:', err);
+      setError(`Camera error: ${err.message || 'Could not access camera'}`);
       setScanning(false);
+      
+      if (qrScannerRef.current) {
+        try {
+          await qrScannerRef.current.stop();
+          await qrScannerRef.current.clear();
+        } catch (cleanupErr) {
+          console.log('Error during cleanup:', cleanupErr);
+        }
+        qrScannerRef.current = null;
+      }
     }
   };
 
   const stopScanning = async () => {
-    if (scannerRef.current) {
+    if (qrScannerRef.current) {
       try {
-        await scannerRef.current.stop();
-        scannerRef.current.clear();
+        const scanner = qrScannerRef.current;
+        const state = scanner.getState();
+        
+        if (state === Html5QrcodeScannerState.SCANNING) {
+          await scanner.stop();
+        }
+        await scanner.clear();
       } catch (err) {
-        // Ignore stop errors
+        console.log('Error stopping scanner:', err);
       }
-      scannerRef.current = null;
+      qrScannerRef.current = null;
     }
     setScanning(false);
   };
 
-  const handleManualConnect = () => {
-    if (manualURI.trim()) {
-      if (manualURI.startsWith('wc:')) {
-        onScan(manualURI);
-        setManualURI('');
-      } else {
-        setError('Invalid WalletConnect URI. Must start with "wc:"');
-      }
-    }
-  };
-
   return (
-    <div className="w-full max-w-[32em] mx-auto px-4">
-      <div className="group relative w-full">
-        {/* Pattern Overlays */}
-        <div 
-          className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-50 transition-opacity duration-[400ms] z-[1]"
-          style={{
-            backgroundImage: 'linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px), linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px)',
-            backgroundSize: '0.5em 0.5em'
-          }}
-        />
-        
-        {/* Main Card */}
-        <div 
-          className="relative bg-white border-[0.35em] border-[#050505] rounded-[0.6em] shadow-[0.7em_0.7em_0_#000000] transition-all duration-[400ms] overflow-hidden z-[2] group-hover:shadow-[1em_1em_0_#000000] group-hover:-translate-x-[0.4em] group-hover:-translate-y-[0.4em] group-hover:scale-[1.02]"
-          style={{ boxShadow: 'inset 0 0 0 0.15em rgba(0, 0, 0, 0.05)' }}
-        >
-          {/* Accent Corner */}
-          <div className="absolute -top-[1em] -right-[1em] w-[4em] h-[4em] bg-[#2563eb] rotate-45 z-[1]" />
-          <div className="absolute top-[0.4em] right-[0.4em] text-white text-[1.2em] font-bold z-[2]">📷</div>
+    <div className="qr-scanner-container">
+      <div className="qr-scanner-card">
+        <div className="qr-scanner-header">
+          <h2>📷 Scan QR Code</h2>
+        </div>
 
-          {/* Title Area */}
-          <div 
-            className="relative px-[1.4em] py-[1.4em] text-white font-extrabold border-b-[0.35em] border-[#050505] uppercase tracking-[0.05em] z-[2]"
-            style={{ 
-              background: '#2563eb',
-              backgroundImage: 'repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1) 0.5em, transparent 0.5em, transparent 1em)',
-              backgroundBlendMode: 'overlay'
-            }}
-          >
-            <span className="text-[1.2em]">Scan QR Code</span>
-          </div>
-
-          {/* Body */}
-          <div className="relative px-[1.5em] py-[1.5em] z-[2]">
-            {/* QR Code Scanner */}
-            <div className="mb-[1.5em]">
-              <div
-                id={qrCodeRegionId}
-                className={`w-full aspect-square bg-[#050505] rounded-[0.4em] overflow-hidden border-[0.2em] border-[#050505] ${scanning ? '' : 'hidden'}`}
-              />
-              {!scanning && (
-                <div className="w-full aspect-square bg-[#f5f5f5] border-[0.2em] border-[#050505] rounded-[0.4em] flex items-center justify-center">
-                  <div className="text-center">
-                    <div className="text-[3em] mb-[0.5em]">
-                      {isWebPlatform ? '🌐' : '📱'}
-                    </div>
-                    <p className="text-[0.9em] font-semibold text-[#6b7280]">
-                      {isWebPlatform 
-                        ? 'Enter URI manually (web platform)' 
-                        : cameraPermissionGranted 
-                          ? 'Camera ready' 
-                          : 'Request camera access to scan'}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Manual URI Input */}
-            <div className="mb-[1.5em]">
-              <label className="block mb-[0.5em] text-[0.85em] font-extrabold text-[#050505] uppercase tracking-[0.05em]">
-                Or Enter URI Manually
-              </label>
-              <input
-                type="text"
-                value={manualURI}
-                onChange={(e) => {
-                  setManualURI(e.target.value);
-                  setError(null);
-                }}
-                placeholder="wc:..."
-                className="w-full px-[0.8em] py-[0.6em] bg-white border-[0.2em] border-[#050505] rounded-[0.4em] font-mono text-[0.85em] text-[#050505] focus:outline-none focus:ring-2 focus:ring-[#2563eb] transition-all duration-200"
-              />
-            </div>
-
-            {/* Error Message */}
-            {error && (
-              <div className="mb-[1.5em] p-3 bg-[#fee2e2] border-[0.15em] border-[#ef4444] rounded-[0.4em] shadow-[0.2em_0.2em_0_#000000]">
-                <p className="text-[0.9em] font-semibold text-[#991b1b]">{error}</p>
+        <div className="qr-scanner-body">
+          {/* Scanner View */}
+          <div className="qr-scanner-view">
+            <div
+              ref={scannerContainerRef}
+              id="html5-qrcode-scanner"
+              className="qr-scanner-inner"
+            />
+            {!scanning && (
+              <div className="qr-reader-placeholder">
+                <div className="qr-reader-icon">📷</div>
+                <p className="qr-reader-text">
+                  {cameraPermissionGranted ? 'Click to start scanning' : 'Request camera access to scan'}
+                </p>
               </div>
             )}
-
-            {/* Buttons */}
-            <div className="flex flex-col gap-[0.8em]">
-              {!scanning ? (
-                !isWebPlatform ? (
-                  <ButtonCool
-                    onClick={startScanning}
-                    text={requestingPermission ? 'Requesting Permission...' : cameraPermissionGranted ? 'Start Camera Scan' : 'Request Camera Access'}
-                    bgColor="#2563eb"
-                    hoverBgColor="#1d4ed8"
-                    borderColor="#050505"
-                    textColor="#ffffff"
-                    size="md"
-                    className="w-full"
-                    disabled={requestingPermission}
-                  />
-                ) : (
-                  <div className="p-3 bg-[#fef3c7] border-[0.15em] border-[#f59e0b] rounded-[0.4em] shadow-[0.2em_0.2em_0_#000000]">
-                    <p className="text-[0.85em] font-semibold text-[#92400e] text-center">
-                      📱 Camera scanning is only available on mobile. Please enter the WalletConnect URI manually below.
-                    </p>
-                  </div>
-                )
-              ) : (
-                <ButtonCool
-                  onClick={stopScanning}
-                  text="Stop Scanning"
-                  bgColor="#6b7280"
-                  hoverBgColor="#4b5563"
-                  borderColor="#050505"
-                  textColor="#ffffff"
-                  size="md"
-                  className="w-full"
-                />
-              )}
-
-              {manualURI && (
-                <ButtonCool
-                  onClick={handleManualConnect}
-                  text="Connect via URI"
-                  bgColor="#10b981"
-                  hoverBgColor="#059669"
-                  borderColor="#050505"
-                  textColor="#ffffff"
-                  size="md"
-                  className="w-full"
-                />
-              )}
-
-              <ButtonCool
-                onClick={onClose}
-                text="Cancel"
-                bgColor="#6b7280"
-                hoverBgColor="#4b5563"
-                borderColor="#050505"
-                textColor="#ffffff"
-                size="md"
-                className="w-full"
-              />
-            </div>
           </div>
 
-          {/* Decorative Elements */}
-          <div className="absolute w-[2.5em] h-[2.5em] bg-[#4d61ff] border-[0.15em] border-[#050505] rounded-[0.3em] rotate-45 -bottom-[1.2em] right-[2em] z-0" />
-          <div className="absolute bottom-0 left-0 w-[1.5em] h-[1.5em] bg-white border-r-[0.25em] border-t-[0.25em] border-[#050505] rounded-tl-[0.5em] z-[1]" />
+          {/* Error Message */}
+          {error && (
+            <div className="qr-scanner-error">
+              <p>{error}</p>
+            </div>
+          )}
+
+          {/* Controls */}
+          <div className="qr-scanner-controls">
+            {!scanning ? (
+              <button
+                onClick={startScanning}
+                disabled={requestingPermission}
+                className="qr-scanner-button qr-scanner-button-primary"
+              >
+                {requestingPermission ? 'Requesting Permission...' : cameraPermissionGranted ? 'Start Camera' : 'Request Camera Access'}
+              </button>
+            ) : (
+              <button
+                onClick={stopScanning}
+                className="qr-scanner-button qr-scanner-button-secondary"
+              >
+                Stop Scanning
+              </button>
+            )}
+            <button
+              onClick={async () => {
+                await stopScanning();
+                onClose();
+              }}
+              className="qr-scanner-button qr-scanner-button-cancel"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
+
+      <style jsx>{`
+        .qr-scanner-container {
+          width: 100%;
+          max-width: 500px;
+          margin: 0 auto;
+        }
+
+        .qr-scanner-card {
+          background: white;
+          border: 3px solid #000;
+          border-radius: 12px;
+          overflow: hidden;
+          box-shadow: 8px 8px 0 #000;
+        }
+
+        .qr-scanner-header {
+          background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+          color: white;
+          padding: 1.5rem;
+          text-align: center;
+          border-bottom: 3px solid #000;
+        }
+
+        .qr-scanner-header h2 {
+          margin: 0;
+          font-size: 1.5rem;
+          font-weight: bold;
+        }
+
+        .qr-scanner-body {
+          padding: 1.5rem;
+        }
+
+        .qr-scanner-view {
+          position: relative;
+          width: 100%;
+          aspect-ratio: 1;
+          background: #000;
+          border-radius: 8px;
+          overflow: hidden;
+          margin-bottom: 1.5rem;
+          border: 2px solid #000;
+        }
+
+        .qr-scanner-inner {
+          width: 100%;
+          height: 100%;
+          position: relative;
+          z-index: 1;
+        }
+
+        /* html5-qrcode library styles */
+        :global(#html5-qrcode-scanner) {
+          width: 100%;
+          height: 100%;
+          position: relative;
+        }
+
+        :global(#html5-qrcode-scanner video) {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
+
+        :global(#html5-qrcode-scanner canvas) {
+          display: none;
+        }
+
+        /* Style the scanning region indicator */
+        :global(#html5-qrcode-scanner #qr-shaded-region) {
+          border: 2px solid #2563eb;
+          border-radius: 8px;
+        }
+
+        /* Ensure video is visible when scanning */
+        .qr-scanner-inner :global(video) {
+          display: block !important;
+        }
+
+        .qr-reader-placeholder {
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          background: #1a1a1a;
+          color: white;
+          z-index: 2;
+          pointer-events: none;
+        }
+
+        .qr-reader-icon {
+          font-size: 4rem;
+          margin-bottom: 1rem;
+        }
+
+        .qr-reader-text {
+          font-size: 1rem;
+          text-align: center;
+          padding: 0 1rem;
+          color: #ccc;
+        }
+
+        .qr-scanner-error {
+          background: #fee2e2;
+          border: 2px solid #ef4444;
+          border-radius: 8px;
+          padding: 1rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .qr-scanner-error p {
+          margin: 0;
+          color: #991b1b;
+          font-weight: 600;
+        }
+
+        .qr-scanner-controls {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .qr-scanner-button {
+          padding: 0.875rem 1.5rem;
+          border: 2px solid #000;
+          border-radius: 8px;
+          font-weight: bold;
+          font-size: 1rem;
+          cursor: pointer;
+          transition: all 0.2s;
+          box-shadow: 4px 4px 0 #000;
+        }
+
+        .qr-scanner-button:active {
+          transform: translate(2px, 2px);
+          box-shadow: 2px 2px 0 #000;
+        }
+
+        .qr-scanner-button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .qr-scanner-button-primary {
+          background: #2563eb;
+          color: white;
+        }
+
+        .qr-scanner-button-primary:hover:not(:disabled) {
+          background: #1d4ed8;
+        }
+
+        .qr-scanner-button-secondary {
+          background: #6b7280;
+          color: white;
+        }
+
+        .qr-scanner-button-secondary:hover {
+          background: #4b5563;
+        }
+
+        .qr-scanner-button-cancel {
+          background: #ef4444;
+          color: white;
+        }
+
+        .qr-scanner-button-cancel:hover {
+          background: #dc2626;
+        }
+
+        /* qr-scanner library highlight styles */
+        :global(.qr-scanner-view video) {
+          width: 100%;
+          height: 100%;
+        }
+      `}</style>
     </div>
   );
 }

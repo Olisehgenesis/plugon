@@ -1,14 +1,54 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useFarcasterWallet } from '../hooks/useFarcasterWallet';
 import { useWalletConnect } from '../hooks/useWalletConnect';
 import { ButtonCool } from './ui/button-cool';
 import { ConnectedApps } from './ConnectedApps';
+import { QRScanner } from './QRScanner';
 
 export function PlugItLanding() {
   const { address, isConnected: farcasterConnected, connect: connectFarcaster } = useFarcasterWallet();
-  const { connectedApps } = useWalletConnect();
+  const { connectedApps, connectViaURI, isBridgeReady, connecting } = useWalletConnect();
+  const [showScanner, setShowScanner] = useState(false);
+  const [manualURI, setManualURI] = useState('');
+  const [uriError, setUriError] = useState<string | null>(null);
+
+  const handleScan = async (uri: string) => {
+    if (farcasterConnected && isBridgeReady) {
+      // Scanner will close itself after scanning
+      await connectViaURI(uri);
+    }
+  };
+
+  const handleManualConnect = async () => {
+    setUriError(null);
+    
+    if (!manualURI.trim()) {
+      setUriError('Please enter a WalletConnect URI');
+      return;
+    }
+
+    const trimmedURI = manualURI.trim();
+    if (!trimmedURI.startsWith('wc:')) {
+      setUriError('Invalid WalletConnect URI. Must start with "wc:"');
+      return;
+    }
+
+    if (farcasterConnected && isBridgeReady) {
+      try {
+        await connectViaURI(trimmedURI);
+        setManualURI(''); // Clear input on success
+      } catch (err: any) {
+        setUriError(err.message || 'Failed to connect');
+      }
+    }
+  };
+
+  // Show scanner if active
+  if (showScanner && farcasterConnected) {
+    return <QRScanner onScan={handleScan} onClose={() => setShowScanner(false)} />;
+  }
 
   // If Farcaster wallet not connected, show connect screen
   if (!farcasterConnected) {
@@ -36,11 +76,11 @@ export function PlugItLanding() {
             {/* Title Area */}
             <div 
               className="relative px-[1.4em] py-[1.4em] text-white font-extrabold text-center border-b-[0.35em] border-[#050505] uppercase tracking-[0.05em] z-[2]"
-              style={{ 
-                background: '#2563eb',
-                backgroundImage: 'repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1) 0.5em, transparent 0.5em, transparent 1em)',
-                backgroundBlendMode: 'overlay'
-              }}
+            style={{ 
+              backgroundColor: '#2563eb',
+              backgroundImage: 'repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1) 0.5em, transparent 0.5em, transparent 1em)',
+              backgroundBlendMode: 'overlay'
+            }}
             >
               <span className="text-[1.8em]">Plug It</span>
             </div>
@@ -130,7 +170,7 @@ export function PlugItLanding() {
           <div 
             className="relative px-[1.4em] py-[1.4em] text-white font-extrabold border-b-[0.35em] border-[#050505] uppercase tracking-[0.05em] z-[2]"
             style={{ 
-              background: '#10b981',
+              backgroundColor: '#10b981',
               backgroundImage: 'repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1) 0.5em, transparent 0.5em, transparent 1em)',
               backgroundBlendMode: 'overlay'
             }}
@@ -188,6 +228,56 @@ export function PlugItLanding() {
                 <p>• All requests are bridged through Plug It to Farcaster</p>
               </div>
             </div>
+
+            {/* Quick Scan Button */}
+            {isBridgeReady && (
+              <div className="mt-[1em] space-y-[1em]">
+                <ButtonCool
+                  onClick={() => setShowScanner(true)}
+                  text="📷 Scan QR Code"
+                  bgColor="#10b981"
+                  hoverBgColor="#059669"
+                  borderColor="#050505"
+                  textColor="#ffffff"
+                  size="md"
+                  className="w-full"
+                />
+
+                {/* Manual URI Input */}
+                <div className="border-t-[0.2em] border-[#050505] pt-[1em]">
+                  <p className="text-[0.85em] font-extrabold text-[#050505] mb-[0.6em] text-center">
+                    Or Paste Connection Link
+                  </p>
+                  <textarea
+                    value={manualURI}
+                    onChange={(e) => {
+                      setManualURI(e.target.value);
+                      setUriError(null);
+                    }}
+                    placeholder="wc:85fa6e9c931ef08c70704c59a6dc032ed1100d4083fd1aae73ea1092f445fb52@2?..."
+                    className="w-full px-[0.8em] py-[0.6em] border-[0.15em] border-[#050505] rounded-[0.4em] font-mono text-[0.8em] resize-none focus:outline-none focus:ring-2 focus:ring-[#2563eb] mb-[0.6em]"
+                    rows={2}
+                    disabled={connecting || !isBridgeReady}
+                  />
+                  {uriError && (
+                    <div className="mb-[0.6em] p-2 bg-[#fee2e2] border-[0.15em] border-[#ef4444] rounded-[0.4em]">
+                      <p className="text-[0.8em] font-semibold text-[#991b1b]">{uriError}</p>
+                    </div>
+                  )}
+                  <ButtonCool
+                    onClick={handleManualConnect}
+                    text="Connect via URI"
+                    bgColor="#2563eb"
+                    hoverBgColor="#1d4ed8"
+                    borderColor="#050505"
+                    textColor="#ffffff"
+                    size="sm"
+                    className="w-full"
+                    disabled={connecting || !isBridgeReady || !manualURI.trim()}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Decorative Elements */}

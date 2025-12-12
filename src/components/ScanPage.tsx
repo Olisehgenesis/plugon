@@ -9,11 +9,37 @@ export function ScanPage() {
   const { connectViaURI, isBridgeReady, connecting, error } = useWalletConnect();
   const { isConnected: farcasterConnected } = useFarcasterWallet();
   const [showScanner, setShowScanner] = useState(false);
+  const [manualURI, setManualURI] = useState('');
+  const [uriError, setUriError] = useState<string | null>(null);
 
   const handleScan = async (uri: string) => {
     if (farcasterConnected && isBridgeReady) {
+      // Scanner will close itself after scanning
       await connectViaURI(uri);
-      setShowScanner(false);
+    }
+  };
+
+  const handleManualConnect = async () => {
+    setUriError(null);
+    
+    if (!manualURI.trim()) {
+      setUriError('Please enter a WalletConnect URI');
+      return;
+    }
+
+    const trimmedURI = manualURI.trim();
+    if (!trimmedURI.startsWith('wc:')) {
+      setUriError('Invalid WalletConnect URI. Must start with "wc:"');
+      return;
+    }
+
+    if (farcasterConnected && isBridgeReady) {
+      try {
+        await connectViaURI(trimmedURI);
+        setManualURI(''); // Clear input on success
+      } catch (err: any) {
+        setUriError(err.message || 'Failed to connect');
+      }
     }
   };
 
@@ -34,7 +60,7 @@ export function ScanPage() {
             <div 
               className="relative px-[1.4em] py-[1.4em] text-white font-extrabold border-b-[0.35em] border-[#050505] uppercase tracking-[0.05em] z-[2]"
               style={{ 
-                background: '#ef4444',
+                backgroundColor: '#ef4444',
                 backgroundImage: 'repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1) 0.5em, transparent 0.5em, transparent 1em)',
                 backgroundBlendMode: 'overlay'
               }}
@@ -67,7 +93,7 @@ export function ScanPage() {
           <div 
             className="relative px-[1.4em] py-[1.4em] text-white font-extrabold border-b-[0.35em] border-[#050505] uppercase tracking-[0.05em] z-[2]"
             style={{ 
-              background: '#2563eb',
+              backgroundColor: '#2563eb',
               backgroundImage: 'repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1) 0.5em, transparent 0.5em, transparent 1em)',
               backgroundBlendMode: 'overlay'
             }}
@@ -97,10 +123,40 @@ export function ScanPage() {
             <button
               onClick={() => setShowScanner(true)}
               disabled={connecting || !isBridgeReady}
-              className="w-full px-[1.5em] py-[0.8em] bg-[#2563eb] hover:bg-[#1d4ed8] disabled:bg-[#6b7280] disabled:cursor-not-allowed text-white font-extrabold border-[0.2em] border-[#050505] rounded-[0.4em] shadow-[0.3em_0.3em_0_#000000] hover:shadow-[0.4em_0.4em_0_#000000] hover:-translate-x-[0.1em] hover:-translate-y-[0.1em] transition-all duration-200 uppercase tracking-[0.05em] text-[0.9em]"
+              className="w-full px-[1.5em] py-[0.8em] bg-[#2563eb] hover:bg-[#1d4ed8] disabled:bg-[#6b7280] disabled:cursor-not-allowed text-white font-extrabold border-[0.2em] border-[#050505] rounded-[0.4em] shadow-[0.3em_0.3em_0_#000000] hover:shadow-[0.4em_0.4em_0_#000000] hover:-translate-x-[0.1em] hover:-translate-y-[0.1em] transition-all duration-200 uppercase tracking-[0.05em] text-[0.9em] mb-[1.5em]"
             >
               {connecting ? 'Connecting...' : 'Start Scanner'}
             </button>
+
+            {/* Manual URI Input */}
+            <div className="border-t-[0.2em] border-[#050505] pt-[1.5em] mt-[1.5em]">
+              <p className="text-[0.9em] font-extrabold text-[#050505] mb-[0.8em] text-center">
+                Or Paste Connection Link
+              </p>
+              <textarea
+                value={manualURI}
+                onChange={(e) => {
+                  setManualURI(e.target.value);
+                  setUriError(null);
+                }}
+                placeholder="wc:85fa6e9c931ef08c70704c59a6dc032ed1100d4083fd1aae73ea1092f445fb52@2?..."
+                className="w-full px-[1em] py-[0.8em] border-[0.2em] border-[#050505] rounded-[0.4em] font-mono text-[0.85em] resize-none focus:outline-none focus:ring-2 focus:ring-[#2563eb] mb-[0.8em]"
+                rows={3}
+                disabled={connecting || !isBridgeReady}
+              />
+              {uriError && (
+                <div className="mb-[0.8em] p-2 bg-[#fee2e2] border-[0.15em] border-[#ef4444] rounded-[0.4em]">
+                  <p className="text-[0.85em] font-semibold text-[#991b1b]">{uriError}</p>
+                </div>
+              )}
+              <button
+                onClick={handleManualConnect}
+                disabled={connecting || !isBridgeReady || !manualURI.trim()}
+                className="w-full px-[1.5em] py-[0.8em] bg-[#10b981] hover:bg-[#059669] disabled:bg-[#6b7280] disabled:cursor-not-allowed text-white font-extrabold border-[0.2em] border-[#050505] rounded-[0.4em] shadow-[0.3em_0.3em_0_#000000] hover:shadow-[0.4em_0.4em_0_#000000] hover:-translate-x-[0.1em] hover:-translate-y-[0.1em] transition-all duration-200 uppercase tracking-[0.05em] text-[0.9em]"
+              >
+                {connecting ? 'Connecting...' : 'Connect via URI'}
+              </button>
+            </div>
           </div>
         </div>
       </div>

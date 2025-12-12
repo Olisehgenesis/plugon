@@ -61,50 +61,108 @@ export function useWalletConnect() {
     setConnectedApps(apps);
   }, []);
 
-  // Bridge WalletConnect requests to Farcaster wallet
+  // Bridge WalletConnect requests to Farcaster wallet or injected provider
   const bridgeRequestToFarcaster = useCallback(
     async (request: { id: number; method: string; params: any[] }) => {
-      if (!farcasterConnected || !address) {
-        throw new Error('Farcaster wallet not connected');
-      }
+      console.log('[WalletConnect] Bridge request:', {
+        method: request.method,
+        params: request.params,
+        farcasterConnected,
+        address,
+      });
 
+      // Try Farcaster provider first
       try {
-        // Get Farcaster Ethereum provider
+        console.log('[WalletConnect] Attempting Farcaster provider...');
         const farcasterProvider = await sdk.wallet.getEthereumProvider();
-        if (!farcasterProvider) {
-          throw new Error('Farcaster wallet provider not available');
+        if (farcasterProvider) {
+          console.log('[WalletConnect] Farcaster provider found, making request...');
+          const result = await farcasterProvider.request({
+            method: request.method,
+            params: request.params,
+          });
+          console.log('[WalletConnect] Farcaster request successful:', result);
+          return result;
         }
-
-        // Forward request to Farcaster wallet provider
-        const result = await farcasterProvider.request({
-          method: request.method,
-          params: request.params,
-        });
-
-        return result;
-      } catch (error: any) {
-        throw new Error(error.message || 'Request failed');
+        console.log('[WalletConnect] Farcaster provider not available');
+      } catch (farcasterError: any) {
+        console.warn('[WalletConnect] Farcaster provider failed:', farcasterError);
       }
+
+      // Fallback to injected provider (window.ethereum)
+      try {
+        console.log('[WalletConnect] Falling back to injected provider (window.ethereum)...');
+        if (typeof window !== 'undefined' && (window as any).ethereum) {
+          const injectedProvider = (window as any).ethereum;
+          console.log('[WalletConnect] Injected provider found:', {
+            isMetaMask: injectedProvider.isMetaMask,
+            isCoinbaseWallet: injectedProvider.isCoinbaseWallet,
+          });
+
+          // Request accounts if needed
+          if (request.method === 'eth_requestAccounts' || request.method === 'eth_accounts') {
+            const accounts = await injectedProvider.request({ method: 'eth_requestAccounts' });
+            console.log('[WalletConnect] Injected provider accounts:', accounts);
+            return accounts;
+          }
+
+          // For other methods, forward the request
+          const result = await injectedProvider.request({
+            method: request.method,
+            params: request.params,
+          });
+          console.log('[WalletConnect] Injected provider request successful:', result);
+          return result;
+        }
+        console.log('[WalletConnect] No injected provider found');
+      } catch (injectedError: any) {
+        console.error('[WalletConnect] Injected provider failed:', injectedError);
+        throw new Error(`Both Farcaster and injected providers failed: ${injectedError.message || 'Unknown error'}`);
+      }
+
+      throw new Error('No Ethereum provider available (neither Farcaster nor injected)');
     },
     [farcasterConnected, address]
   );
 
   // Initialize WalletConnect SignClient (wallet-side)
   const initializeSignClient = useCallback(async () => {
-    if (!farcasterConnected || !address) {
+    console.log('[WalletConnect] initializeSignClient called:', {
+      farcasterConnected,
+      address,
+      hasInjected: typeof window !== 'undefined' && !!(window as any).ethereum,
+    });
+
+    // Check if we have any wallet (Farcaster or injected)
+    const hasInjected = typeof window !== 'undefined' && !!(window as any).ethereum;
+    if (!farcasterConnected && !hasInjected) {
+      console.warn('[WalletConnect] No wallet available (neither Farcaster nor injected)');
       setState((prev) => ({
         ...prev,
-        error: 'Please connect Farcaster wallet first',
+        error: 'Please connect a wallet first (Farcaster or browser extension)',
       }));
       return;
     }
 
     if (signClientRef.current) {
+      console.log('[WalletConnect] SignClient already initialized');
       return; // Already initialized
     }
 
     try {
-      const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'demo-project-id';
+      const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+      
+      if (!projectId || projectId === 'demo-project-id') {
+        const errorMsg = 'WalletConnect Project ID is missing or invalid. Please set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in your .env file. Get your project ID from https://cloud.walletconnect.com';
+        console.error('[WalletConnect]', errorMsg);
+        setState((prev) => ({
+          ...prev,
+          error: errorMsg,
+        }));
+        return;
+      }
+
+      console.log('[WalletConnect] Initializing Core and SignClient with projectId:', projectId.substring(0, 8) + '...');
       
       // Initialize Core
       const core = new Core({
@@ -116,25 +174,128 @@ export function useWalletConnect() {
       const signClient = await SignClient.init({
         core,
         metadata: {
-          name: 'Plug It - Farcaster Bridge',
-          description: 'Bridge between Web3 apps and Farcaster wallet',
+          name: 'Plug It - Wallet Bridge',
+          description: 'Bridge between Web3 apps and wallet (Farcaster or injected)',
           url: typeof window !== 'undefined' ? window.location.origin : '',
           icons: [`${typeof window !== 'undefined' ? window.location.origin : ''}/icon.png`],
         },
       });
       signClientRef.current = signClient;
+      console.log('[WalletConnect] SignClient initialized successfully');
 
       // Handle session proposals (when dApps want to connect)
       signClient.on('session_proposal', async (proposal) => {
+        const requiredChains = proposal.params.requiredNamespaces?.eip155?.chains || [];
+        const optionalChains = proposal.params.optionalNamespaces?.eip155?.chains || [];
+        
+        console.log('[WalletConnect] Session proposal received:', {
+          id: proposal.id,
+          proposer: proposal.params.proposer.metadata?.name,
+          requiredChains,
+          optionalChains,
+          requiredNamespaces: Object.keys(proposal.params.requiredNamespaces || {}),
+          fullRequiredNamespaces: JSON.stringify(proposal.params.requiredNamespaces, null, 2),
+        });
+
         try {
           const { id, params } = proposal;
           
-          // Build approved namespaces based on Farcaster wallet capabilities
+          // Get current account and chainId (try Farcaster first, then injected)
+          let currentAddress = address;
+          let currentChainId = chainId || 1;
+
+          if (!currentAddress) {
+            console.log('[WalletConnect] No Farcaster address, trying injected provider...');
+            try {
+              if (typeof window !== 'undefined' && (window as any).ethereum) {
+                const accounts = await (window as any).ethereum.request({ method: 'eth_requestAccounts' });
+                if (accounts && accounts.length > 0) {
+                  currentAddress = accounts[0];
+                  const chainIdHex = await (window as any).ethereum.request({ method: 'eth_chainId' });
+                  currentChainId = parseInt(chainIdHex, 16);
+                  console.log('[WalletConnect] Using injected provider:', { currentAddress, currentChainId });
+                }
+              }
+            } catch (err) {
+              console.error('[WalletConnect] Failed to get injected provider account:', err);
+            }
+          }
+
+          if (!currentAddress) {
+            throw new Error('No wallet account available');
+          }
+
+          // Get requested chains from the proposal - check both required and optional namespaces
+          const requiredChainsFromProposal = params.requiredNamespaces?.eip155?.chains || [];
+          const optionalChainsFromProposal = params.optionalNamespaces?.eip155?.chains || [];
+          
+          // Also check if chains are specified in a different format
+          const allProposalChains = [...requiredChainsFromProposal, ...optionalChainsFromProposal];
+          
+          // Supported EVM chains: Base, BSC, ETH, Arbitrum, Optimism, Celo
+          // Chain IDs: Ethereum=1, Polygon=137, Arbitrum=42161, Base=8453, Optimism=10, BSC=56, Celo=42220, Avalanche=43114
+          const supportedChains = [
+            'eip155:1',      // Ethereum Mainnet
+            'eip155:137',    // Polygon
+            'eip155:42161',  // Arbitrum
+            'eip155:8453',   // Base
+            'eip155:10',     // Optimism
+            'eip155:56',     // BSC
+            'eip155:42220',  // Celo
+            'eip155:43114',  // Avalanche
+          ];
+          
+          // Build accounts array - provide the same address for all chains
+          // EVM addresses are the same across all EVM chains
+          const accounts: string[] = [];
+          
+          // Determine which chains to support
+          // CRITICAL: Always include Ethereum mainnet (eip155:1) as most dApps require it
+          let chainsToSupport: string[] = ['eip155:1']; // Always start with Ethereum mainnet
+          
+          if (allProposalChains.length > 0) {
+            // Add any requested chains that we support
+            allProposalChains.forEach(chain => {
+              if (supportedChains.includes(chain) && !chainsToSupport.includes(chain)) {
+                chainsToSupport.push(chain);
+              }
+            });
+          } else {
+            // If no chains specified, add all our supported chains
+            supportedChains.forEach(chain => {
+              if (!chainsToSupport.includes(chain)) {
+                chainsToSupport.push(chain);
+              }
+            });
+          }
+          
+          // Create accounts for all chains we're supporting
+          chainsToSupport.forEach(chain => {
+            accounts.push(`${chain}:${currentAddress}`);
+          });
+          
+          console.log('[WalletConnect] Final chains and accounts:', {
+            chainsToSupport,
+            accountsCount: accounts.length,
+            accounts: accounts.slice(0, 3) + '...', // Show first 3
+          });
+
+          console.log('[WalletConnect] Building approved namespaces with:', {
+            address: currentAddress,
+            chainId: currentChainId,
+            requiredChainsFromProposal,
+            optionalChainsFromProposal,
+            allProposalChains,
+            chainsToSupport,
+            accountsProvided: accounts,
+          });
+          
+          // Build approved namespaces based on wallet capabilities
           const approvedNamespaces = buildApprovedNamespaces({
             proposal: params,
             supportedNamespaces: {
               eip155: {
-                chains: ['eip155:1', 'eip155:137', 'eip155:42161', 'eip155:8453', 'eip155:10', 'eip155:56'],
+                chains: chainsToSupport,
                 methods: [
                   'eth_accounts',
                   'eth_requestAccounts',
@@ -157,18 +318,55 @@ export function useWalletConnect() {
                   'wallet_getCapabilities',
                 ],
                 events: ['chainChanged', 'accountsChanged', 'message', 'disconnect', 'connect'],
-                accounts: [
-                  `eip155:${chainId || 1}:${address}`,
-                ],
+                accounts: accounts,
               },
             },
           });
 
+          // Validate approved namespaces
+          console.log('[WalletConnect] Approved namespaces:', JSON.stringify(approvedNamespaces, null, 2));
+          
+          // Ensure all required chains have accounts
+          const requiredChainsInApproved = approvedNamespaces.eip155?.chains || [];
+          const accountsInApproved = approvedNamespaces.eip155?.accounts || [];
+          
+          console.log('[WalletConnect] Validation:', {
+            requiredChainsInApproved,
+            accountsInApproved,
+            accountsCount: accountsInApproved.length,
+            allChainsHaveAccounts: requiredChainsInApproved.every(chain => 
+              accountsInApproved.some(acc => acc.startsWith(chain))
+            ),
+          });
+
+          // Verify accounts are provided for all chains
+          const missingAccounts = requiredChainsInApproved.filter(chain => 
+            !accountsInApproved.some(acc => acc.startsWith(chain))
+          );
+          
+          if (missingAccounts.length > 0) {
+            console.warn('[WalletConnect] Missing accounts for chains:', missingAccounts);
+            // Add missing accounts
+            missingAccounts.forEach(chain => {
+              accountsInApproved.push(`${chain}:${currentAddress}`);
+            });
+            approvedNamespaces.eip155!.accounts = accountsInApproved;
+            console.log('[WalletConnect] Fixed accounts:', approvedNamespaces.eip155?.accounts);
+          }
+
+          console.log('[WalletConnect] Approving session with final namespaces...');
           // Approve the session
           const session = await signClient.approve({
             id,
             namespaces: approvedNamespaces,
           });
+          console.log('[WalletConnect] Session approved:', {
+            topic: session.topic,
+            acknowledged: session.acknowledged,
+          });
+          
+          // Wait a bit for session keys to sync
+          await new Promise(resolve => setTimeout(resolve, 500));
 
           // Get the full session with peer metadata
           const fullSession = signClient.session.get(session.topic);
@@ -181,10 +379,12 @@ export function useWalletConnect() {
             url: peerMetadata.url || '',
             icon: peerMetadata.icons?.[0],
             topic: session.topic,
-            chainId: chainId || 1,
-            accounts: [address],
+            chainId: currentChainId,
+            accounts: [currentAddress],
             connectedAt: Date.now(),
           };
+
+          console.log('[WalletConnect] Connected app saved:', newApp);
 
           const updatedApps = [...connectedApps.filter(app => app.topic !== session.topic), newApp];
           saveConnectedApps(updatedApps);
@@ -212,11 +412,26 @@ export function useWalletConnect() {
 
       // Handle session requests (when dApps want to sign/transact)
       signClient.on('session_request', async (event) => {
+        console.log('[WalletConnect] Session request received:', {
+          topic: event.topic,
+          method: event.params.request.method,
+          id: event.id,
+        });
+
         try {
           const { topic, params, id } = event;
           const { request } = params;
 
-          // Bridge the request to Farcaster wallet
+          // Verify session exists
+          const session = signClient.session.get(topic);
+          if (!session) {
+            console.error('[WalletConnect] Session not found for topic:', topic);
+            throw new Error('Session not found');
+          }
+          console.log('[WalletConnect] Session verified:', session.topic);
+
+          // Bridge the request to wallet (Farcaster or injected)
+          console.log('[WalletConnect] Bridging request:', request.method);
           const result = await bridgeRequestToFarcaster({
             id,
             method: request.method,
@@ -224,6 +439,7 @@ export function useWalletConnect() {
           });
 
           // Respond to the request
+          console.log('[WalletConnect] Responding to request with result');
           await signClient.respond({
             topic,
             response: {
@@ -233,9 +449,9 @@ export function useWalletConnect() {
             },
           });
 
-          console.log('Bridged request to Farcaster:', request.method, result);
+          console.log('[WalletConnect] Request bridged successfully:', request.method);
         } catch (error: any) {
-          console.error('RPC request bridge error:', error);
+          console.error('[WalletConnect] RPC request bridge error:', error);
           // Reject the request on error
           try {
             await signClient.respond({
@@ -303,10 +519,18 @@ export function useWalletConnect() {
   // Connect via QR code URI (from external dApp)
   const connectViaURI = useCallback(
     async (uri: string) => {
-      if (!farcasterConnected) {
+      console.log('[WalletConnect] connectViaURI called:', {
+        uri: uri.substring(0, 50) + '...',
+        farcasterConnected,
+        address,
+      });
+
+      // Allow connection even if Farcaster is not connected (will use injected provider)
+      if (!farcasterConnected && typeof window !== 'undefined' && !(window as any).ethereum) {
+        console.error('[WalletConnect] No wallet available (neither Farcaster nor injected)');
         setState((prev) => ({
           ...prev,
-          error: 'Please connect Farcaster wallet first',
+          error: 'Please connect a wallet first (Farcaster or browser extension)',
         }));
         return;
       }
@@ -314,12 +538,14 @@ export function useWalletConnect() {
       let signClient = signClientRef.current;
       
       if (!signClient) {
+        console.log('[WalletConnect] Initializing SignClient...');
         await initializeSignClient();
         await new Promise(resolve => setTimeout(resolve, 100));
         signClient = signClientRef.current;
       }
 
       if (!signClient) {
+        console.error('[WalletConnect] SignClient initialization failed');
         setState((prev) => ({
           ...prev,
           error: 'Wallet not initialized',
@@ -327,13 +553,17 @@ export function useWalletConnect() {
         return;
       }
 
+      console.log('[WalletConnect] Starting pairing process...');
       setState((prev) => ({ ...prev, connecting: true, error: null }));
 
       try {
         // Pair with the dApp using the URI
+        console.log('[WalletConnect] Pairing with URI...');
         await signClient.core.pairing.pair({ uri });
+        console.log('[WalletConnect] Pairing successful, waiting for session proposal...');
         // The session_proposal event will be triggered automatically
       } catch (error: any) {
+        console.error('[WalletConnect] Pairing failed:', error);
         setState((prev) => ({
           ...prev,
           error: error.message || 'Failed to connect',
@@ -341,7 +571,7 @@ export function useWalletConnect() {
         }));
       }
     },
-    [farcasterConnected, initializeSignClient]
+    [farcasterConnected, address, initializeSignClient]
   );
 
   // Disconnect from an app
@@ -391,10 +621,14 @@ export function useWalletConnect() {
     }
   }, [saveConnectedApps]);
 
-  // Initialize wallet when Farcaster wallet connects
+  // Initialize wallet when any wallet connects (Farcaster or injected)
   useEffect(() => {
-    if (farcasterConnected && address && !signClientRef.current) {
-      initializeSignClient();
+    const hasInjected = typeof window !== 'undefined' && !!(window as any).ethereum;
+    if ((farcasterConnected && address) || hasInjected) {
+      if (!signClientRef.current) {
+        console.log('[WalletConnect] Wallet available, initializing SignClient...');
+        initializeSignClient();
+      }
     }
   }, [farcasterConnected, address, initializeSignClient]);
 
@@ -405,6 +639,6 @@ export function useWalletConnect() {
     connectViaURI,
     disconnectApp,
     disconnectAll,
-    isBridgeReady: farcasterConnected && !!address,
+    isBridgeReady: (farcasterConnected && !!address) || (typeof window !== 'undefined' && !!(window as any).ethereum),
   };
 }
